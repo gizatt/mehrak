@@ -10,6 +10,7 @@ PLEASE SEE THE "simple" EXAMPLE FOR AN INTRODUCTORY SKETCH.
 ------------------------------------------------------------------------- */
 
 #include <Adafruit_Protomatter.h>
+#include "screen.h"
 
 /* ----------------------------------------------------------------------
 The RGB matrix must be wired to VERY SPECIFIC pins, different for each
@@ -22,7 +23,7 @@ uint8_t addrPins[] = {10, 5, 13, 9};
 uint8_t clockPin = 12;
 uint8_t latchPin = PIN_SERIAL1_RX;
 uint8_t oePin = PIN_SERIAL1_TX;
-const int DISPLAY_WIDTH = 32;
+const int DISPLAY_WIDTH = 64;
 const int DISPLAY_HEIGHT = 32;
 
 /* ----------------------------------------------------------------------
@@ -46,8 +47,20 @@ Adafruit_Protomatter matrix(
 
 // SETUP - RUNS ONCE AT PROGRAM START --------------------------------------
 
-// Normalized coordinates: bottom-left is 0, 0, top-right is 1., 1., +x is right
+void draw_background(){
+  matrix.startWrite();
+  for (int16_t j = 0; j < DISPLAY_HEIGHT; j++) {
+    for (int16_t i = 0; i < DISPLAY_WIDTH / 2; i++) {
+      const auto pixel = pgm_read_word(&screen[j * (DISPLAY_WIDTH / 2) + i]);
+      matrix.writePixel(i, j, pixel);
+      // Display is mirrored along centerline
+      matrix.writePixel(DISPLAY_WIDTH - i - 1, j, pixel);
+    }
+  }
+  matrix.endWrite();
+}
 
+// Normalized coordinates: bottom-left is 0, 0, top-right is 1., 1., +x is right
 void draw_eye(float x, float y, float width, float height, int eye_color)
 {
   int bottom_left_u = floor(DISPLAY_WIDTH * (x - width / 2.));
@@ -93,7 +106,6 @@ void setup(void)
   // that span across the matrices...nothing showy, the goal of this
   // sketch is just to demonstrate tiling basics.
 
-  matrix.fillScreen(0x0);
   matrix.drawLine(0, 0, matrix.width() - 1, matrix.height() - 1,
                   matrix.color565(255, 0, 0)); // Red line
   matrix.drawLine(matrix.width() - 1, 0, 0, matrix.height() - 1,
@@ -143,7 +155,9 @@ void loop(void)
   // Blink when it's time
   float t_blink = t - time_of_next_blink;
   float blink_duration = 0.1;
-  float eye_height = 0.4;
+  float eye_height = 0.3;
+  float eye_width = 0.1;
+  float eye_spacing = 0.15;
   if (t_blink <= 0.0){
   }
   else if (t_blink <= blink_duration)
@@ -170,16 +184,16 @@ void loop(void)
   if (t >= time_of_next_target_change){
     // Choose new target
     time_of_next_target_change = t + rand_range(1.0, 5.0);
-    x_look_target = rand_range(0.3, 0.6);
-    y_look_target = rand_range(0.2, 0.8);
+    x_look_target = rand_range(0.42, 0.58);
+    y_look_target = rand_range(0.1, 0.5);
 
     // Force a blink during the move
     time_of_next_blink = t + rand_range(0, 0.2);
   }
 
-  matrix.fillScreen(0x0);
+  draw_background();
   auto eye_color = matrix.color565(0x00, 0xFF, 0x00);
 
-  draw_eyes(x_look, y_look, 0.2, eye_height, 0.3, eye_color);
+  draw_eyes(x_look, y_look, eye_width, eye_height, eye_spacing, eye_color);
   matrix.show();
 }
