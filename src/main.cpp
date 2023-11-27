@@ -10,7 +10,15 @@ PLEASE SEE THE "simple" EXAMPLE FOR AN INTRODUCTORY SKETCH.
 ------------------------------------------------------------------------- */
 
 #include <Adafruit_Protomatter.h>
+#include <Wire.h>
+#include <Adafruit_PWMServoDriver.h>
+#include <BasicLinearAlgebra.h>
+
+#include "motion_smoothing.h"
 #include "screen.h"
+
+// called this way, it uses the default address 0x40
+Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 
 /* ----------------------------------------------------------------------
 The RGB matrix must be wired to VERY SPECIFIC pins, different for each
@@ -47,10 +55,13 @@ Adafruit_Protomatter matrix(
 
 // SETUP - RUNS ONCE AT PROGRAM START --------------------------------------
 
-void draw_background(){
+void draw_background()
+{
   matrix.startWrite();
-  for (int16_t j = 0; j < DISPLAY_HEIGHT; j++) {
-    for (int16_t i = 0; i < DISPLAY_WIDTH / 2; i++) {
+  for (int16_t j = 0; j < DISPLAY_HEIGHT; j++)
+  {
+    for (int16_t i = 0; i < DISPLAY_WIDTH / 2; i++)
+    {
       const auto pixel = pgm_read_word(&screen[j * (DISPLAY_WIDTH / 2) + i]);
       matrix.writePixel(i, j, pixel);
       // Display is mirrored along centerline
@@ -61,26 +72,25 @@ void draw_background(){
 }
 
 // Normalized coordinates: bottom-left is 0, 0, top-right is 1., 1., +x is right
-void draw_eye(float x, float y, float width, float height, int eye_color)
+void draw_eye(const BLA::Matrix<2, 1> &eye_pos, float width, float height, int eye_color)
 {
-  int bottom_left_u = floor(DISPLAY_WIDTH * (x - width / 2.));
-  int bottom_left_v = floor(DISPLAY_HEIGHT * (y - height / 2.));
+  int bottom_left_u = floor(DISPLAY_WIDTH * (eye_pos(0) - width / 2.));
+  int bottom_left_v = floor(DISPLAY_HEIGHT * (eye_pos(1) - height / 2.));
   int width_u = ceil(DISPLAY_WIDTH * width);
   int width_v = ceil(DISPLAY_HEIGHT * height);
   matrix.fillRect(bottom_left_u, bottom_left_v, width_u, width_v, eye_color);
 }
 
-void draw_eyes(float center_x, float center_y, float eye_width, float eye_height, float eye_spacing, int eye_color)
+void draw_eyes(const BLA::Matrix<2, 1> &center_pos, float eye_width, float eye_height, float eye_spacing, int eye_color)
 {
+  const BLA::Matrix<2, 1> eye_offset(eye_spacing / 2., 0.);
   draw_eye(
-      center_x - eye_spacing / 2.,
-      center_y,
+      center_pos - eye_offset,
       eye_width,
       eye_height,
       eye_color);
   draw_eye(
-      center_x + eye_spacing / 2.,
-      center_y,
+      center_pos + eye_offset,
       eye_width,
       eye_height,
       eye_color);
@@ -98,6 +108,10 @@ void setup(void)
     for (;;)
       ;
   }
+
+  pwm.begin();
+  pwm.setOscillatorFrequency(27000000);
+  pwm.setPWMFreq(50);
 
   delay(1000);
 
@@ -121,36 +135,57 @@ void setup(void)
   delay(1000);
 }
 
-inline float rand_range(float min, float max){
-  float unit = ((float) random()) / RAND_MAX;
+inline float rand_range(float min, float max)
+{
+  float unit = ((float)random()) / RAND_MAX;
   return (max - min) * unit + min;
 }
 
-// LOOP - RUNS REPEATEDLY AFTER SETUP --------------------------------------
-float last_update_t = -0.01;
-float x_look = 0.5;
-float x_look_vel = 0.0;
-float x_look_target = 0.5;
-float y_look = 0.5;
-float y_look_vel = 0.0;
-float y_look_target = 0.5;
-float time_of_next_target_change = 0.0;
-float freq = 10.0;
-float damping_ratio = 0.9;
-float KP = freq * freq;
-float KD = -2. * freq * damping_ratio;
-float time_of_next_blink = 0.0;
+const float eye_freq = 10.0;
+const float eye_damping_ratio = 0.9;
+PIDMotionSmoother<2> eye_motion_smoother(
+    BLA::Matrix<2, 1>(0.5, 0.5),
+    BLA::Matrix<2, 1>(0, 0),
+    eye_freq,
+    eye_damping_ratio);
+double last_display_update_t = -0.01;
+double time_of_next_target_change = 0.0;
+double time_of_next_blink = 0.0;
+
+const float servo_freq = 10.0;
+const float servo_damping_ratio = 1.;
+PIDMotionSmoother<1> servo_motion_smoother(
+    BLA::Matrix<1, 1>(1.),
+    BLA::Matrix<1, 1>(1.),
+    servo_freq,
+    servo_damping_ratio);
+double time_of_next_servo_movement = 0.0;
 
 void loop(void)
 {
   // Alternate looking places, blinking during movement
-  float t = ((float)millis()) / 1000.;
-  float dt = t - last_update_t;
-  if (dt < 1E-3){
+  double t = ((double)millis()) / 1000.;
+  float dt = t - last_display_update_t;
+
+  servo_motion_smoother.update(t);
+  float servo_target = servo_motion_smoother.get_state()(0);
+  if (t >= time_of_next_servo_movement)
+  {
+    servo_motion_smoother.set_target({-servo_target});
+    time_of_next_servo_movement = t + 4.0;
+  }
+  const float minrange = 1400;
+  const float maxrange = 2500;
+  const float midrange = (minrange + maxrange) / 2.;
+  int microsec = midrange + (maxrange - midrange) * servo_target;
+  pwm.writeMicroseconds(0, microsec);
+
+  if (dt < 1. / 30.)
+  {
     return;
   }
 
-  last_update_t = t;
+  last_display_update_t = t;
 
   // Blink when it's time
   float t_blink = t - time_of_next_blink;
@@ -158,7 +193,8 @@ void loop(void)
   float eye_height = 0.3;
   float eye_width = 0.1;
   float eye_spacing = 0.15;
-  if (t_blink <= 0.0){
+  if (t_blink <= 0.0)
+  {
   }
   else if (t_blink <= blink_duration)
   {
@@ -167,26 +203,23 @@ void loop(void)
   else if (t_blink <= 2. * blink_duration)
   {
     eye_height *= (t_blink - blink_duration) / blink_duration;
-  } else {
+  }
+  else
+  {
     // Choose when to next blink
     time_of_next_blink = t + rand_range(2.0, 6.0);
   }
 
   // Move eye towards target.
-  float x_look_acc = KP * (x_look_target - x_look) + KD * x_look_vel;
-  x_look_vel += dt * x_look_acc;
-  x_look += dt * x_look_vel;
-  float y_look_acc = KP * (y_look_target - y_look) + KD * y_look_vel;
-  y_look_vel += dt * y_look_acc;
-  y_look += dt * y_look_vel;
+  eye_motion_smoother.update(t);
 
   // Move target occasionally.
-  if (t >= time_of_next_target_change){
+  if (t >= time_of_next_target_change)
+  {
     // Choose new target
     time_of_next_target_change = t + rand_range(1.0, 5.0);
-    x_look_target = rand_range(0.42, 0.58);
-    y_look_target = rand_range(0.1, 0.5);
-
+    eye_motion_smoother.set_target(
+        {rand_range(0.42, 0.58), rand_range(0.1, 0.5)});
     // Force a blink during the move
     time_of_next_blink = t + rand_range(0, 0.2);
   }
@@ -194,6 +227,12 @@ void loop(void)
   draw_background();
   auto eye_color = matrix.color565(0x00, 0xFF, 0x00);
 
-  draw_eyes(x_look, y_look, eye_width, eye_height, eye_spacing, eye_color);
+  draw_eyes(eye_motion_smoother.get_state(), eye_width, eye_height, eye_spacing, eye_color);
+
+  matrix.setCursor(0, 32 - 9);
+  matrix.setTextColor(matrix.color565(255, 255, 255));
+  matrix.setTextSize(1);
+  matrix.printf("%04d", microsec);
+
   matrix.show();
 }
