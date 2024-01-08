@@ -1,13 +1,14 @@
 /* ----------------------------------------------------------------------
-"Tiled" Protomatter library example sketch. Demonstrates use of multiple
-RGB LED matrices as a single larger drawing surface. This example is
-written for two 64x32 matrices (tiled into a 64x64 display) but can be
-adapted to others. If using MatrixPortal, larger multi-panel tilings like
-this should be powered from a separate 5V DC supply, not the USB port
-(this example works OK because the graphics are very minimal).
+Mehrak main driver code.
 
-PLEASE SEE THE "simple" EXAMPLE FOR AN INTRODUCTORY SKETCH.
+Summary of functionality:
+- Manages a simple calibration config using the Adafruit_nRF52_Arduino InternalFileSystem library. This calibration stores the "fully open" and "fully closed" servo settings for each of the 4 corners, plus other miscellaneous style settings like movement speeds.
+- Allows the editing of the above through BLE GATT.
+- Reads the state of 8 control buttons via an I2C I/O daughter board.
+- Displays images on the front and back 32x64 pixel display panels.
 ------------------------------------------------------------------------- */
+
+#include "persistent_config.h"
 
 #include <Adafruit_Protomatter.h>
 #include <Wire.h>
@@ -45,7 +46,7 @@ oriented the same way), but usually requires longer cables.
 ------------------------------------------------------------------------- */
 
 Adafruit_Protomatter matrix(
-    DISPLAY_WIDTH,             // Width of matrix (or matrices, if tiled horizontally)
+    DISPLAY_WIDTH * 2,             // Width of matrix (or matrices, if tiled horizontally)
     4,                         // Bit depth, 1-6
     1, rgbPins,                // # of matrix chains, array of 6 RGB pins for each
     4, addrPins,               // # of address pins (height is inferred), array of pins
@@ -66,6 +67,11 @@ void draw_background()
       matrix.writePixel(i, j, pixel);
       // Display is mirrored along centerline
       matrix.writePixel(DISPLAY_WIDTH - i - 1, j, pixel);
+
+      // And again, for display on back
+      matrix.writePixel(DISPLAY_WIDTH + i, j, pixel);
+      matrix.writePixel(2 * DISPLAY_WIDTH - i - 1, j, pixel);
+      
     }
   }
   matrix.endWrite();
@@ -96,8 +102,74 @@ void draw_eyes(const BLA::Matrix<2, 1> &center_pos, float eye_width, float eye_h
       eye_color);
 }
 
+BLEDfu  bledfu;  // OTA DFU service
+BLEDis  bledis;  // device information
+PersistentConfigManager * persistent_config;
+
+
+void startAdv(void)
+{
+  // Advertising packet
+  Bluefruit.Advertising.addFlags(BLE_GAP_ADV_FLAGS_LE_ONLY_GENERAL_DISC_MODE);
+
+  // Advertising with only board ID
+  struct ATTR_PACKED {
+    uint16_t mfr_id;
+    
+    uint8_t  field_len;
+    uint16_t field_key;
+    uint16_t field_value;
+  } mfr_adv;
+
+  mfr_adv.mfr_id = UUID16_COMPANY_ID_ADAFRUIT;
+  mfr_adv.field_len = 4;
+  mfr_adv.field_key = 1; // board id
+  mfr_adv.field_value = USB_PID;
+
+  Bluefruit.Advertising.addManufacturerData(&mfr_adv, sizeof(mfr_adv));
+
+  // Add name to advertising, since there is enough room
+  Bluefruit.Advertising.addName();
+  
+  /* Start Advertising
+   * - Enable auto advertising if disconnected
+   * - Interval:  fast mode = 20 ms, slow mode = 152.5 ms
+   * - Timeout for fast mode is 30 seconds
+   * - Start(timeout) with timeout = 0 will advertise forever (until connected)
+   * 
+   * For recommended advertising interval
+   * https://developer.apple.com/library/content/qa/qa1931/_index.html   
+   */
+  Bluefruit.Advertising.restartOnDisconnect(true);
+  Bluefruit.Advertising.setInterval(32, 244);    // in unit of 0.625 ms
+  Bluefruit.Advertising.setFastTimeout(30);      // number of seconds in fast mode
+  Bluefruit.Advertising.start(0);                // 0 = Don't stop advertising after n seconds  
+}
+
 void setup(void)
 {
+  InternalFS.begin();
+  
+  // Config the peripheral connection with maximum bandwidth 
+  // more SRAM required by SoftDevice
+  // Note: All config***() function must be called before begin()
+  Bluefruit.configPrphBandwidth(BANDWIDTH_MAX);
+  Bluefruit.begin();
+  Bluefruit.setTxPower(8);    // Check bluefruit.h for supported values
+  Bluefruit.setName("Mehrak");
+  
+  // To be consistent OTA DFU should be added first if it exists
+  bledfu.begin();
+
+  // Configure and Start Device Information Service
+  bledis.setManufacturer("Kara Fjolnir");
+  bledis.begin();
+
+  startAdv();
+  
+  persistent_config = new PersistentConfigManager("mehrak_config");
+  
+
   // Initialize matrix...
   ProtomatterStatus status = matrix.begin();
   Serial.print("Protomatter begin() status: ");
@@ -174,11 +246,26 @@ void loop(void)
     servo_motion_smoother.set_target({-servo_target});
     time_of_next_servo_movement = t + 4.0;
   }
-  const float minrange = 1400;
-  const float maxrange = 2500;
+  const float minrange = 700;
+  const float maxrange = 1900;
   const float midrange = (minrange + maxrange) / 2.;
   int microsec = midrange + (maxrange - midrange) * servo_target;
-  pwm.writeMicroseconds(0, microsec);
+  for (int k = 0; k < 4; k++){
+    pwm.writeMicroseconds(k, microsec);
+  }
+
+  // 4-7: Midrange
+  // 8-11: Low end
+  // 12-15: Top end
+  for (int k = 4; k < 8; k++){
+    pwm.writeMicroseconds(k, minrange);
+  }
+  for (int k = 8; k < 12; k++){
+    pwm.writeMicroseconds(k, (minrange + maxrange) / 2);
+  }
+  for (int k = 12; k < 16; k++){
+    pwm.writeMicroseconds(k, maxrange);
+  }
 
   if (dt < 1. / 30.)
   {
@@ -235,4 +322,6 @@ void loop(void)
   matrix.printf("%04d", microsec);
 
   matrix.show();
+
+  persistent_config->get_value("/test", 1.23);
 }
