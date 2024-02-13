@@ -9,8 +9,9 @@ class PIDMotionSmoother
 
 public:
   PIDMotionSmoother(
-      const State &x_0, const State &x_des, float freq, float damping_ratio) : m_x(x_0), m_xd(BLA::Zeros<N, 1>()), m_x_des(x_des), m_last_update_t(0.), m_kp(freq * freq), m_kd(-2. * freq * damping_ratio)
+      const State &x_0, const State &x_des, float freq, float damping_ratio) : m_x(x_0), m_xd(BLA::Zeros<N, 1>()), m_x_des(x_des), m_last_update_t(0.)
   {
+    update_damping(freq, damping_ratio);
   }
 
   const State &get_state() const
@@ -31,6 +32,12 @@ public:
     State xdd = (m_x_des - m_x) * m_kp + m_xd * m_kd;
     m_xd += xdd * dt;
     m_x += m_xd * dt;
+  }
+
+  void update_damping(float freq, float damping_ratio)
+  {
+    m_kp = freq * freq;
+    m_kd = -2. * freq * damping_ratio;
   }
 
 private:
