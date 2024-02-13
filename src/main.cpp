@@ -18,8 +18,28 @@ Summary of functionality:
 #include "motion_smoothing.h"
 #include "screen.h"
 
+
+// PINOUT
+//
+//  I2c: I/O shield (address 0x27)
+//       Servo PWM shield (address 0x40)
+//        Upper left: 4
+//        Upper right:
+//        Lower left: 5
+//        Lower right: 
+//       MPU 6050 (0x68)
+//        mounting: +y up, +x is mehrak "right", +z is out through face.
+// 
+//  Digital I/O:
+//       Screens: 0, 1, 5, 6, 9, 10, 11, 12, A0, A1, A4, A5
+//       RGBD LEDs: A2
+//       Servo OE: A3
+//
+//
+
 // called this way, it uses the default address 0x40
 Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
+
 
 /* ----------------------------------------------------------------------
 The RGB matrix must be wired to VERY SPECIFIC pins, different for each
@@ -246,8 +266,8 @@ void loop(void)
     servo_motion_smoother.set_target({-servo_target});
     time_of_next_servo_movement = t + 4.0;
   }
-  const float minrange = 700;
-  const float maxrange = 1900;
+  const float minrange = 1500;
+  const float maxrange = 1500;
   const float midrange = (minrange + maxrange) / 2.;
   int microsec = midrange + (maxrange - midrange) * servo_target;
   for (int k = 0; k < 4; k++){
