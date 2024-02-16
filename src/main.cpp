@@ -11,14 +11,13 @@ Summary of functionality:
 #include <Wire.h>
 #include <Adafruit_NeoPixel.h>
 
-
 #include "utils.h"
 #include "ble_and_fs_helpers.h"
 #include "servo_manager.h"
 #include "persistent_config.h"
 #include "motion_smoothing.h"
 #include "display_manager.h"
-#include "TCA9555.h"
+#include "button_manager.h"
 
 // PINOUT
 //
@@ -47,12 +46,18 @@ ServoManager *upper_right;
 ServoManager *lower_left;
 ServoManager *lower_right;
 
-Adafruit_NeoPixel strip = Adafruit_NeoPixel(6, A2, NEO_GRB);
+ButtonManager *button_manager;
+const int PIN_OPEN = 12;
+const int PIN_OPENTOP = 13;
+const int PIN_CLOSE = 15;
 
-TCA9535 TCA(0x27);
+const int PIN_WAVE = 1;
+
+Adafruit_NeoPixel strip = Adafruit_NeoPixel(6, A2, NEO_GRB);
 
 void setup(void)
 {
+  double t = ((double)millis()) / 1000.;
 
   // Do BLE / Internal FS requirement as a pre-req for persistent config
   setup_ble_and_internal_fs();
@@ -75,12 +80,13 @@ void setup(void)
   delay(500);
 
   setup_pwm();
-  upper_left = new ServoManager(persistent_config, 4, "ul", 1500, 1500);
-  lower_left = new ServoManager(persistent_config, 5, "ll", 1500, 1500);
-  upper_right = new ServoManager(persistent_config, 6, "ur", 1500, 1500);
-  lower_right = new ServoManager(persistent_config, 7, "lr", 1500, 1500);
+  upper_left = new ServoManager(persistent_config, 4, "ul", 640, 1925);
+  lower_left = new ServoManager(persistent_config, 5, "ll", 2000, 850);
+  upper_right = new ServoManager(persistent_config, 6, "ur", 2070, 800);
+  lower_right = new ServoManager(persistent_config, 7, "lr", 780, 1975);
 
-  TCA.begin();
+  // Talk to buttons
+  button_manager = new ButtonManager({PIN_OPEN, PIN_OPENTOP, PIN_CLOSE, PIN_WAVE}, t);
 
   delay(500);
 }
@@ -103,8 +109,11 @@ void loop(void)
   float dt = t - last_display_update_t;
 
   upper_left->update(t);
+  lower_left->update(t);
   upper_right->update(t);
-  
+  lower_right->update(t);
+  button_manager->update(t);
+
   if (dt < 1. / 30.)
   {
     return;
@@ -154,11 +163,29 @@ void loop(void)
 
   draw_eyes(eye_motion_smoother.get_state(), eye_width, eye_height, eye_spacing, eye_color);
 
-  for (int pin = 0; pin < 16; pin++)
+  if (button_manager->get_button_state(PIN_CLOSE).is_pressed())
   {
-    int val = TCA.read1(pin);
-    matrix.drawPixel(DISPLAY_WIDTH + pin / 8, pin % 8, matrix.color565(0., 0., val*255));
+    upper_left->set_target(0.0);
+    upper_right->set_target(0.0);
+    lower_left->set_target(0.0);
+    lower_right->set_target(0.0);
   }
+  else if (button_manager->get_button_state(PIN_OPENTOP).is_pressed())
+  {
+    upper_left->set_target(1.0);
+    upper_right->set_target(1.0);
+  }
+  else if (button_manager->get_button_state(PIN_WAVE).is_pressed())
+  {
+    upper_right->set_target(1.0);
+  }
+  else if (button_manager->get_button_state(PIN_OPEN).is_pressed())
+  {
+    upper_left->set_target(0.97);
+    upper_right->set_target(0.97);
+    lower_left->set_target(1.0);
+    lower_right->set_target(1.0);
+  };
 
   matrix.show();
 }

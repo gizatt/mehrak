@@ -59,6 +59,7 @@ def on_connect():
         print("Connected to device")
     else:
         print("Failed to connect to device")
+        return
 
 def create_characteristic_row(name, uuid, parent):
     row = tk.Frame(parent)

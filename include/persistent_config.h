@@ -19,17 +19,17 @@ public:
     {
         // Get value from existing file if it exists; otherwise
         // start that file.
-        _file.open(_name.c_str(), Adafruit_LittleFS_Namespace::FILE_O_READ);
-        if (_file)
-        {
-            // Data existed, read in our value.
-            _file.read(&_value_synced_to_file, sizeof(float));
-            // Assume success.
-             _file.close();
-        } else
-        {
+        // _file.open(_name.c_str(), Adafruit_LittleFS_Namespace::FILE_O_READ);
+        // if (_file)
+        // {
+        //     // Data existed, read in our value.
+        //     _file.read(&_value_synced_to_file, sizeof(float));
+        //     // Assume success.
+        //      _file.close();
+        // } else
+        // {
             _write_value(value);
-        }
+        // }
 
         // Create GATT config.
         _ble_characteristic = new BLECharacteristic(uuid);
