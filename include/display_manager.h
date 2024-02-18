@@ -17,6 +17,17 @@ enum EyeMode {
   HAPPY = 1
 };
 
+
+Adafruit_Protomatter matrix = Adafruit_Protomatter(
+    DISPLAY_WIDTH * 2,         // Width of matrix (or matrices, if tiled horizontally)
+    4,                         // Bit depth, 1-6
+    1, rgbPins,                // # of matrix chains, array of 6 RGB pins for each
+    4, addrPins,               // # of address pins (height is inferred), array of pins
+    clockPin, latchPin, oePin, // Other matrix control pins
+    true                       // No double-buffering here (see "doublebuffer" example)
+);                             // Row tiling: two rows in "serpentine" path)
+
+
 class DisplayManager
 {
 public:
@@ -24,8 +35,6 @@ public:
   {
     // Initialize matrix...
     ProtomatterStatus status = matrix.begin();
-    Serial.print("Protomatter begin() status: ");
-    Serial.println((int)status);
     if (status != PROTOMATTER_OK)
     {
       // DO NOT CONTINUE if matrix setup encountered an error.
@@ -70,16 +79,16 @@ public:
     // Move eye towards target.
     eye_motion_smoother.update(t);
 
-    // Move target occasionally.
-    if (t >= time_of_next_target_change)
-    {
-      // Choose new target
-      time_of_next_target_change = t + rand_range(1.0, 5.0);
-      eye_motion_smoother.set_target(
-          {rand_range(0.42, 0.58), rand_range(0.1, 0.5)});
-      // Force a blink during the move
-      time_of_next_blink = t + rand_range(0, 0.2);
-    }
+    // // Move target occasionally.
+    // if (t >= time_of_next_target_change)
+    // {
+    //   // Choose new target
+    //   time_of_next_target_change = t + rand_range(1.0, 5.0);
+    //   eye_motion_smoother.set_target(
+    //       {rand_range(0.42, 0.58), rand_range(0.1, 0.5)});
+    //   // Force a blink during the move
+    //   time_of_next_blink = t + rand_range(0, 0.2);
+    // }
 
     draw_background();
     auto eye_color = matrix.color565(0x00, 0xFF, 0x00);
@@ -87,6 +96,19 @@ public:
     draw_eyes(eye_motion_smoother.get_state(), eye_width, eye_height, eye_spacing, eye_color);
 
     matrix.show();
+  }
+
+  void set_target(const BLA::Matrix<2, 1> &eye_pos){
+    eye_motion_smoother.set_target(eye_pos);
+  }
+  
+  const BLA::Matrix<2, 1>& get_target(){
+    return eye_motion_smoother.get_target();
+  }
+
+
+  void set_eye_mode(EyeMode new_eye_mode) {
+    current_eye_mode = new_eye_mode;
   }
 
   Adafruit_Protomatter *get_display()
@@ -183,21 +205,11 @@ private:
         eye_height,
         eye_color);
   }
-
-  Adafruit_Protomatter matrix = Adafruit_Protomatter(
-      DISPLAY_WIDTH * 2,         // Width of matrix (or matrices, if tiled horizontally)
-      4,                         // Bit depth, 1-6
-      1, rgbPins,                // # of matrix chains, array of 6 RGB pins for each
-      4, addrPins,               // # of address pins (height is inferred), array of pins
-      clockPin, latchPin, oePin, // Other matrix control pins
-      true                       // No double-buffering here (see "doublebuffer" example)
-  );                             // Row tiling: two rows in "serpentine" path)
-
   const float eye_freq = 10.0;
   const float eye_damping_ratio = 0.9;
   PIDMotionSmoother<2> eye_motion_smoother = PIDMotionSmoother<2>(
-      BLA::Matrix<2, 1>(0.5, 0.5),
-      BLA::Matrix<2, 1>(0, 0),
+      BLA::Matrix<2, 1>(0.5, 1.0),
+      BLA::Matrix<2, 1>(0.5, 0.35),
       eye_freq,
       eye_damping_ratio);
   double last_display_update_t = -0.01;

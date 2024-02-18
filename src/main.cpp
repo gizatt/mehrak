@@ -51,10 +51,140 @@ ButtonManager *button_manager;
 const int PIN_OPEN = 12;
 const int PIN_OPENTOP = 13;
 const int PIN_CLOSE = 15;
-
 const int PIN_WAVE = 1;
+const int PIN_HAPPY = 2;
 
 Adafruit_NeoPixel strip = Adafruit_NeoPixel(6, A2, NEO_GRB);
+
+class Behavior
+{
+public:
+  Behavior(){};
+  virtual void start(double t) = 0;
+  virtual bool update(double t) = 0;
+};
+
+class IdleBehavior : public Behavior
+{
+public:
+  void start(double t) override
+  {
+    last_eye_mode_update = t;
+  }
+  bool update(double t) override
+  {
+    if (t - last_eye_mode_update > 3.)
+    {
+      display_manager->set_eye_mode(EyeMode::NORMAL);
+      last_eye_mode_update = t;
+    }
+    return true;
+  }
+
+private:
+  double last_eye_mode_update;
+};
+IdleBehavior idle_behavior;
+
+class OpenBehavior : public Behavior
+{
+public:
+  void start(double t) override
+  {
+  }
+
+  bool update(double t) override
+  {
+    upper_left->set_target(0.97);
+    upper_right->set_target(0.97);
+    lower_left->set_target(1.0);
+    lower_right->set_target(1.0);
+    return true;
+  }
+};
+OpenBehavior open_behavior;
+
+class HappyBehavior : public Behavior
+{
+public:
+  void start(double t) override
+  {
+  }
+
+  bool update(double t) override
+  {
+    display_manager->set_eye_mode(EyeMode::HAPPY);
+    return true;
+  }
+};
+HappyBehavior happy_behavior;
+
+class OpenTopBehavior : public Behavior
+{
+public:
+  void start(double t) override
+  {
+  }
+
+  bool update(double t) override
+  {
+    upper_left->set_target(1.0);
+    upper_right->set_target(1.0);
+    return true;
+  }
+};
+OpenTopBehavior open_top_behavior;
+
+class CloseBehavior : public Behavior
+{
+public:
+  void start(double t) override
+  {
+  }
+
+  bool update(double t) override
+  {
+    upper_left->set_target(0.0);
+    upper_right->set_target(0.0);
+    lower_left->set_target(0.0);
+    lower_right->set_target(0.0);
+    return true;
+  }
+};
+CloseBehavior close_behavior;
+
+class WaveBehavior : public Behavior
+{
+public:
+  void start(double t) override
+  {
+    t_start = t;
+    display_manager->set_eye_mode(EyeMode::HAPPY);
+  }
+
+  bool update(double t) override
+  {
+    double t_local = t - t_start;
+    double target = 0.3 * cos(2. * 3.1415 * t_local / 2. + 3.1415) + 0.7;
+
+    double fade = min(
+      t_local / FADE_IN_DURATION, (WAVE_DURATION - t_local) / FADE_IN_DURATION
+    );
+    fade = min(fade, 1.);
+
+    upper_left->set_target(target * fade);
+
+    return t_local >= WAVE_DURATION;
+  }
+
+  private:
+  double t_start;
+  const double WAVE_DURATION = 4.;
+  const double FADE_IN_DURATION = 0.5;
+};
+WaveBehavior wave_behavior;
+
+Behavior *current_behavior;
 
 void setup(void)
 {
@@ -87,9 +217,12 @@ void setup(void)
   lower_right = new ServoManager(persistent_config, 7, "lr", 780, 1975);
 
   // Talk to buttons
-  button_manager = new ButtonManager({PIN_OPEN, PIN_OPENTOP, PIN_CLOSE, PIN_WAVE}, t);
+  button_manager = new ButtonManager({PIN_OPEN, PIN_OPENTOP, PIN_CLOSE, PIN_WAVE, PIN_HAPPY}, t);
 
   delay(500);
+  
+  idle_behavior.start(t);
+  current_behavior = nullptr;
 }
 
 void loop(void)
@@ -104,27 +237,43 @@ void loop(void)
   button_manager->update(t);
   display_manager->update(t);
 
-  if (button_manager->get_button_state(PIN_CLOSE).is_pressed())
+  if (current_behavior != nullptr)
   {
-    upper_left->set_target(0.0);
-    upper_right->set_target(0.0);
-    lower_left->set_target(0.0);
-    lower_right->set_target(0.0);
+    if (current_behavior->update(t))
+    {
+      current_behavior = nullptr;
+      idle_behavior.start(t);
+    }
   }
-  else if (button_manager->get_button_state(PIN_OPENTOP).is_pressed())
+  else
   {
-    upper_left->set_target(1.0);
-    upper_right->set_target(1.0);
+    idle_behavior.update(t);
+
+    // Try to dispatch new behavior
+    if (button_manager->get_button_state(PIN_CLOSE).is_pressed())
+    {
+      current_behavior = &close_behavior;
+    }
+    else if (button_manager->get_button_state(PIN_OPENTOP).is_pressed())
+    {
+      current_behavior = &open_top_behavior;
+    }
+    else if (button_manager->get_button_state(PIN_WAVE).is_pressed())
+    {
+      current_behavior = &wave_behavior;
+    }
+    else if (button_manager->get_button_state(PIN_OPEN).is_pressed())
+    {
+      current_behavior = &open_behavior;
+    }
+    else if (button_manager->get_button_state(PIN_HAPPY).is_pressed())
+    {
+      current_behavior = &happy_behavior;
+    }
+
+    if (current_behavior != nullptr)
+    {
+      current_behavior->start(t);
+    }
   }
-  else if (button_manager->get_button_state(PIN_WAVE).is_pressed())
-  {
-    upper_right->set_target(1.0);
-  }
-  else if (button_manager->get_button_state(PIN_OPEN).is_pressed())
-  {
-    upper_left->set_target(0.97);
-    upper_right->set_target(0.97);
-    lower_left->set_target(1.0);
-    lower_right->set_target(1.0);
-  };
 }

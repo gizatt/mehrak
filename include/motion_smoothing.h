@@ -19,6 +19,11 @@ public:
     return m_x;
   }
 
+  const State &get_target() const
+  {
+    return m_x_des;
+  }
+
   void set_target(const State &x_des)
   {
     m_x_des = x_des;

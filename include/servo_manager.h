@@ -32,8 +32,8 @@ void setup_pwm()
 }
 
 
-const float DEFAULT_SERVO_FREQ = 2.5;
-const float DEFAULT_SERVO_DAMPING_RATIO = 0.8;
+const float DEFAULT_SERVO_FREQ = 4.0;
+const float DEFAULT_SERVO_DAMPING_RATIO = 1.0;
 
 class ServoManager
 {
@@ -43,14 +43,17 @@ class ServoManager
 public:
     ServoManager(PersistentConfigManager *config, uint8_t servo_index, std::string prefix, float default_closed, float default_open) :  _index(servo_index), _open(default_open), _closed(default_closed), _config(config), _prefix(prefix)
     {
-        _open = _config->get_value((prefix + "_O").c_str(), default_open);
-        _closed = _config->get_value((prefix + "_C").c_str(), default_closed);
+        // _open = _config->get_value((prefix + "_O").c_str(), default_open);
+        // _closed = _config->get_value((prefix + "_C").c_str(), default_closed);
 
         _motion_smoother = new PIDMotionSmoother<1>(
             BLA::Matrix<1, 1>(0.),
             BLA::Matrix<1, 1>(0.),
-            _config->get_value("S_FREQ", DEFAULT_SERVO_FREQ),
-            _config->get_value("S_DAMP", DEFAULT_SERVO_DAMPING_RATIO));
+            DEFAULT_SERVO_FREQ,
+            DEFAULT_SERVO_DAMPING_RATIO
+        );
+            // _config->get_value("S_FREQ", DEFAULT_SERVO_FREQ),
+            // _config->get_value("S_DAMP", DEFAULT_SERVO_DAMPING_RATIO));
     }
 
     void set_target(double target) {
@@ -64,15 +67,15 @@ public:
 
     void update(double t)
     {
-        if (t < _last_settings_update || t - _last_settings_update >= 0.1)
-        {
-            _last_settings_update = t;
-            _motion_smoother->update_damping(
-                _config->get_value("S_FREQ", DEFAULT_SERVO_FREQ),
-                _config->get_value("S_DAMP", DEFAULT_SERVO_DAMPING_RATIO));
-            _closed = _config->get_value((_prefix + "_C").c_str(), _closed);
-            _open = _config->get_value((_prefix + "_O").c_str(), _open);
-        }
+        // if (t < _last_settings_update || t - _last_settings_update >= 0.1)
+        // {
+        //     _last_settings_update = t;
+        //     _motion_smoother->update_damping(
+        //         _config->get_value("S_FREQ", DEFAULT_SERVO_FREQ),
+        //         _config->get_value("S_DAMP", DEFAULT_SERVO_DAMPING_RATIO));
+        //     _closed = _config->get_value((_prefix + "_C").c_str(), _closed);
+        //     _open = _config->get_value((_prefix + "_O").c_str(), _open);
+        // }
         _motion_smoother->update(t);
 
         uint16_t target = _motion_smoother->get_state()(0) * (_open - _closed) + _closed;
