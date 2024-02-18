@@ -40,6 +40,7 @@ Summary of functionality:
 //
 
 PersistentConfigManager *persistent_config;
+DisplayManager *display_manager;
 
 ServoManager *upper_left;
 ServoManager *upper_right;
@@ -66,15 +67,15 @@ void setup(void)
   persistent_config = new PersistentConfigManager("mehrak_config");
 
   // Do display setup
-  setup_display();
+  display_manager = new DisplayManager();
 
   // Turn the RGB LEDs green
   strip.begin(); // initialize the strip
   strip.clear(); // Initialize all pixels to 'off'
-  strip.setPixelColor(0, 0, 200, 0);
-  strip.setPixelColor(2, 0, 200, 0);
-  strip.setPixelColor(3, 0, 200, 0);
-  strip.setPixelColor(5, 0, 200, 0);
+  strip.setPixelColor(0, 0, 150, 0);
+  strip.setPixelColor(2, 0, 150, 0);
+  strip.setPixelColor(3, 0, 150, 0);
+  strip.setPixelColor(5, 0, 150, 0);
   strip.show();
 
   delay(500);
@@ -91,77 +92,17 @@ void setup(void)
   delay(500);
 }
 
-const float eye_freq = 10.0;
-const float eye_damping_ratio = 0.9;
-PIDMotionSmoother<2> eye_motion_smoother(
-    BLA::Matrix<2, 1>(0.5, 0.5),
-    BLA::Matrix<2, 1>(0, 0),
-    eye_freq,
-    eye_damping_ratio);
-double last_display_update_t = -0.01;
-double time_of_next_target_change = 0.0;
-double time_of_next_blink = 0.0;
-
 void loop(void)
 {
   // Alternate looking places, blinking during movement
   double t = ((double)millis()) / 1000.;
-  float dt = t - last_display_update_t;
 
   upper_left->update(t);
   lower_left->update(t);
   upper_right->update(t);
   lower_right->update(t);
   button_manager->update(t);
-
-  if (dt < 1. / 30.)
-  {
-    return;
-  }
-
-  last_display_update_t = t;
-
-  // Blink when it's time
-  float t_blink = t - time_of_next_blink;
-  float blink_duration = 0.1;
-  float eye_height = 0.3;
-  float eye_width = 0.1;
-  float eye_spacing = 0.15;
-  if (t_blink <= 0.0)
-  {
-  }
-  else if (t_blink <= blink_duration)
-  {
-    eye_height *= (blink_duration - t_blink) / blink_duration;
-  }
-  else if (t_blink <= 2. * blink_duration)
-  {
-    eye_height *= (t_blink - blink_duration) / blink_duration;
-  }
-  else
-  {
-    // Choose when to next blink
-    time_of_next_blink = t + rand_range(2.0, 6.0);
-  }
-
-  // Move eye towards target.
-  eye_motion_smoother.update(t);
-
-  // Move target occasionally.
-  if (t >= time_of_next_target_change)
-  {
-    // Choose new target
-    time_of_next_target_change = t + rand_range(1.0, 5.0);
-    eye_motion_smoother.set_target(
-        {rand_range(0.42, 0.58), rand_range(0.1, 0.5)});
-    // Force a blink during the move
-    time_of_next_blink = t + rand_range(0, 0.2);
-  }
-
-  draw_background();
-  auto eye_color = matrix.color565(0x00, 0xFF, 0x00);
-
-  draw_eyes(eye_motion_smoother.get_state(), eye_width, eye_height, eye_spacing, eye_color);
+  display_manager->update(t);
 
   if (button_manager->get_button_state(PIN_CLOSE).is_pressed())
   {
@@ -186,6 +127,4 @@ void loop(void)
     lower_left->set_target(1.0);
     lower_right->set_target(1.0);
   };
-
-  matrix.show();
 }
