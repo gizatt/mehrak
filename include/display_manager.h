@@ -3,6 +3,7 @@
 #include <Adafruit_Protomatter.h>
 #include "BasicLinearAlgebra.h"
 #include "screen.h"
+#include "imu_manager.h"
 
 uint8_t rgbPins[] = {6, A5, A1, A0, A4, 11};
 uint8_t addrPins[] = {10, 5, 13, 9};
@@ -12,11 +13,11 @@ uint8_t oePin = PIN_SERIAL1_TX;
 const int DISPLAY_WIDTH = 64;
 const int DISPLAY_HEIGHT = 32;
 
-enum EyeMode {
+enum EyeMode
+{
   NORMAL = 0,
   HAPPY = 1
 };
-
 
 Adafruit_Protomatter matrix = Adafruit_Protomatter(
     DISPLAY_WIDTH * 2,         // Width of matrix (or matrices, if tiled horizontally)
@@ -26,7 +27,6 @@ Adafruit_Protomatter matrix = Adafruit_Protomatter(
     clockPin, latchPin, oePin, // Other matrix control pins
     true                       // No double-buffering here (see "doublebuffer" example)
 );                             // Row tiling: two rows in "serpentine" path)
-
 
 class DisplayManager
 {
@@ -41,6 +41,8 @@ public:
       for (;;)
         ;
     }
+
+    imu_is_valid = setup_imu();
   }
 
   void update(double t)
@@ -93,21 +95,35 @@ public:
     draw_background();
     auto eye_color = matrix.color565(0x00, 0xFF, 0x00);
 
-    draw_eyes(eye_motion_smoother.get_state(), eye_width, eye_height, eye_spacing, eye_color);
+    BLA::Matrix<2, 1> eye_offset;
+    eye_offset(0) = 0;
+    eye_offset(1) = 0;
+    if (imu_is_valid)
+    {
+      sensors_event_t a, g, temp;
+      if (mpu.getEvent(&a, &g, &temp))
+      {
+        eye_offset(0) = g.gyro.x / 10.;
+        eye_offset(1) = g.gyro.y / 10.;
+      }
+    }
+    draw_eyes(eye_motion_smoother.get_state() + eye_offset, eye_width, eye_height, eye_spacing, eye_color);
 
     matrix.show();
   }
 
-  void set_target(const BLA::Matrix<2, 1> &eye_pos){
+  void set_target(const BLA::Matrix<2, 1> &eye_pos)
+  {
     eye_motion_smoother.set_target(eye_pos);
   }
-  
-  const BLA::Matrix<2, 1>& get_target(){
+
+  const BLA::Matrix<2, 1> &get_target()
+  {
     return eye_motion_smoother.get_target();
   }
 
-
-  void set_eye_mode(EyeMode new_eye_mode) {
+  void set_eye_mode(EyeMode new_eye_mode)
+  {
     current_eye_mode = new_eye_mode;
   }
 
@@ -137,7 +153,8 @@ private:
     matrix.endWrite();
   }
 
-  void draw_eye_normal(const BLA::Matrix<2, 1> &eye_pos, float width, float height, int eye_color) {
+  void draw_eye_normal(const BLA::Matrix<2, 1> &eye_pos, float width, float height, int eye_color)
+  {
     int bottom_left_u = floor(DISPLAY_WIDTH * (eye_pos(0) - width / 2.));
     int bottom_left_v = floor(DISPLAY_HEIGHT * (eye_pos(1) - height / 2.));
     int width_u = ceil(DISPLAY_WIDTH * width);
@@ -145,49 +162,46 @@ private:
     matrix.fillRect(bottom_left_u, bottom_left_v, width_u, width_v, eye_color);
   }
 
-  void draw_eye_happy(const BLA::Matrix<2, 1> &eye_pos, float width, float height, int eye_color) {
+  void draw_eye_happy(const BLA::Matrix<2, 1> &eye_pos, float width, float height, int eye_color)
+  {
     int top_u = floor(DISPLAY_WIDTH * (eye_pos(0)));
-    int top_v = floor(DISPLAY_HEIGHT * (eye_pos(1) - height*0.3)); 
+    int top_v = floor(DISPLAY_HEIGHT * (eye_pos(1) - height * 0.3));
     int bottom_u = floor(DISPLAY_WIDTH * eye_pos(0));
     int bottom_v = floor(DISPLAY_HEIGHT * eye_pos(1));
     int right_u = floor(DISPLAY_WIDTH * (eye_pos(0) + width * 0.5));
-    int right_v = floor(DISPLAY_HEIGHT * (eye_pos(1) + height*0.1));
+    int right_v = floor(DISPLAY_HEIGHT * (eye_pos(1) + height * 0.1));
     int left_u = floor(DISPLAY_WIDTH * (eye_pos(0) - width * 0.5));
-    int left_v = floor(DISPLAY_HEIGHT * (eye_pos(1) + height*0.1));
+    int left_v = floor(DISPLAY_HEIGHT * (eye_pos(1) + height * 0.1));
 
     int br_u = floor(DISPLAY_WIDTH * (eye_pos(0) + width * 0.3));
-    int br_v = floor(DISPLAY_HEIGHT * (eye_pos(1) + height*0.4));
+    int br_v = floor(DISPLAY_HEIGHT * (eye_pos(1) + height * 0.4));
     int bl_u = floor(DISPLAY_WIDTH * (eye_pos(0) - width * 0.3));
-    int bl_v = floor(DISPLAY_HEIGHT * (eye_pos(1) + height*0.4));
+    int bl_v = floor(DISPLAY_HEIGHT * (eye_pos(1) + height * 0.4));
 
-    
     matrix.fillTriangle(
-      top_u, top_v, right_u, right_v, br_u, br_v, eye_color
-    );
+        top_u, top_v, right_u, right_v, br_u, br_v, eye_color);
     matrix.fillTriangle(
-      top_u, top_v, br_u, br_v, bottom_u, bottom_v, eye_color
-    );
-    
+        top_u, top_v, br_u, br_v, bottom_u, bottom_v, eye_color);
+
     matrix.fillTriangle(
-      top_u, top_v, left_u, left_v, bl_u, bl_v, eye_color
-    );
+        top_u, top_v, left_u, left_v, bl_u, bl_v, eye_color);
     matrix.fillTriangle(
-      top_u, top_v, bl_u, bl_v, bottom_u, bottom_v, eye_color
-    );
+        top_u, top_v, bl_u, bl_v, bottom_u, bottom_v, eye_color);
   }
 
   // Normalized coordinates: bottom-left is 0, 0, top-right is 1., 1., +x is right
   void draw_eye(const BLA::Matrix<2, 1> &eye_pos, float width, float height, int eye_color)
   {
-    switch (current_eye_mode){
-      case EyeMode::NORMAL:
-        draw_eye_normal(eye_pos, width, height, eye_color);
-        break;
-      case EyeMode::HAPPY:
-        draw_eye_happy(eye_pos, width, height, eye_color);
-        break;
-      default:
-        break;
+    switch (current_eye_mode)
+    {
+    case EyeMode::NORMAL:
+      draw_eye_normal(eye_pos, width, height, eye_color);
+      break;
+    case EyeMode::HAPPY:
+      draw_eye_happy(eye_pos, width, height, eye_color);
+      break;
+    default:
+      break;
     }
   }
 
@@ -216,5 +230,6 @@ private:
   double time_of_next_target_change = 0.0;
   double time_of_next_blink = 0.0;
 
+  bool imu_is_valid;
   EyeMode current_eye_mode = EyeMode::HAPPY;
 };
