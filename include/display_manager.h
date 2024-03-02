@@ -12,6 +12,8 @@ uint8_t latchPin = PIN_SERIAL1_RX;
 uint8_t oePin = PIN_SERIAL1_TX;
 const int DISPLAY_WIDTH = 64;
 const int DISPLAY_HEIGHT = 32;
+const float MAX_GYRO_EYE_OFFSET_X = 0.07;
+const float MAX_GYRO_EYE_OFFSET_Y = 0.2;
 
 enum EyeMode
 {
@@ -28,6 +30,20 @@ Adafruit_Protomatter matrix = Adafruit_Protomatter(
     true                       // No double-buffering here (see "doublebuffer" example)
 );                             // Row tiling: two rows in "serpentine" path)
 
+// Dims the supplied color by the given fraction
+// ref some stuff from https://forums.adafruit.com/viewtopic.php?t=21536
+uint16_t dim565(uint16_t color, float fraction)
+{
+  uint32_t bits = (uint32_t)color;
+  uint32_t blue = bits & 0x001F;     // 5 bits blue
+  uint32_t green = bits & 0x07E0;    // 6 bits green
+  uint32_t red = bits & 0xF800;      // 5 bits red
+  blue = fraction * (float) blue;
+  green = fraction * (float) green;
+  red = fraction * (float) red;
+  return (red / 8 << 11) | (green / 4 << 5) | (blue / 8);
+}
+
 class DisplayManager
 {
 public:
@@ -42,12 +58,15 @@ public:
         ;
     }
 
-    imu_is_valid = setup_imu();
+    gyro_eye_offset.Fill(0.);
   }
 
   void update(double t)
   {
     float dt = t - last_display_update_t;
+
+    m_imu_manager.update(t);
+
     if (dt < 1. / 30.)
     {
       return;
@@ -98,14 +117,20 @@ public:
     BLA::Matrix<2, 1> eye_offset;
     eye_offset(0) = 0;
     eye_offset(1) = 0;
-    if (imu_is_valid)
+
+    if (m_imu_manager.is_valid())
     {
-      sensors_event_t a, g, temp;
-      if (mpu.getEvent(&a, &g, &temp))
-      {
-        eye_offset(0) = g.gyro.x / 10.;
-        eye_offset(1) = g.gyro.y / 10.;
+      const auto gyro_measurement = m_imu_manager.get_smoothed_gyro_measurement();
+      gyro_eye_offset(0) += -gyro_measurement(1) / 100.;
+      gyro_eye_offset(1) += gyro_measurement(0) / 100.;
+
+      for (int i = 0; i < 2; i++){
+        gyro_eye_offset(i) *= 0.9;
       }
+      gyro_eye_offset(0) = max(min(gyro_eye_offset(0), MAX_GYRO_EYE_OFFSET_X), -MAX_GYRO_EYE_OFFSET_X);
+      gyro_eye_offset(1) = max(min(gyro_eye_offset(1), MAX_GYRO_EYE_OFFSET_Y), -MAX_GYRO_EYE_OFFSET_Y);
+
+      eye_offset += gyro_eye_offset;
     }
     draw_eyes(eye_motion_smoother.get_state() + eye_offset, eye_width, eye_height, eye_spacing, eye_color);
 
@@ -140,7 +165,9 @@ private:
     {
       for (int16_t i = 0; i < DISPLAY_WIDTH / 2; i++)
       {
-        const auto pixel = pgm_read_word(&screen[j * (DISPLAY_WIDTH / 2) + i]);
+        auto pixel = pgm_read_word(&screen[j * (DISPLAY_WIDTH / 2) + i]);
+        // pixel = dim565(pixel, 0.75);
+
         matrix.writePixel(i, j, pixel);
         // Display is mirrored along centerline
         matrix.writePixel(DISPLAY_WIDTH - i - 1, j, pixel);
@@ -232,4 +259,9 @@ private:
 
   bool imu_is_valid;
   EyeMode current_eye_mode = EyeMode::HAPPY;
+
+  // State machine for trying to keep eyes stationary.
+  // If we're not moving 
+  IMUManager m_imu_manager;
+  BLA::Matrix<2, 1> gyro_eye_offset;
 };
