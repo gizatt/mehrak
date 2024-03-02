@@ -12,8 +12,18 @@ uint8_t latchPin = PIN_SERIAL1_RX;
 uint8_t oePin = PIN_SERIAL1_TX;
 const int DISPLAY_WIDTH = 64;
 const int DISPLAY_HEIGHT = 32;
-const float MAX_GYRO_EYE_OFFSET_X = 0.07;
+const float MAX_GYRO_EYE_OFFSET_X = 0.05;
 const float MAX_GYRO_EYE_OFFSET_Y = 0.2;
+const float HEAD_MOVING_ANG_VEL_THRESHOLD = 0.5;
+
+const float BLINK_DURATION = 0.1;
+const float NOMINAL_EYE_HEIGHT = 0.3;
+const float NOMINAL_EYE_WIDTH = 0.1;
+const float NOMINAL_EYE_SPACING = 0.15;
+const float NOMINAL_EYE_FREQ = 10.0;
+const float NOMINAL_EYE_DAMPING_RATIO = 0.9;
+const float FAST_EYE_FREQ = 30.0;
+const float FAST_EYE_DAMPING_RATIO = 0.9;
 
 enum EyeMode
 {
@@ -35,12 +45,12 @@ Adafruit_Protomatter matrix = Adafruit_Protomatter(
 uint16_t dim565(uint16_t color, float fraction)
 {
   uint32_t bits = (uint32_t)color;
-  uint32_t blue = bits & 0x001F;     // 5 bits blue
-  uint32_t green = bits & 0x07E0;    // 6 bits green
-  uint32_t red = bits & 0xF800;      // 5 bits red
-  blue = fraction * (float) blue;
-  green = fraction * (float) green;
-  red = fraction * (float) red;
+  uint32_t blue = bits & 0x001F;  // 5 bits blue
+  uint32_t green = bits & 0x07E0; // 6 bits green
+  uint32_t red = bits & 0xF800;   // 5 bits red
+  blue = fraction * (float)blue;
+  green = fraction * (float)green;
+  red = fraction * (float)red;
   return (red / 8 << 11) | (green / 4 << 5) | (blue / 8);
 }
 
@@ -49,6 +59,8 @@ class DisplayManager
 public:
   DisplayManager()
   {
+    nominal_eye_target = eye_motion_smoother.get_target();
+
     // Initialize matrix...
     ProtomatterStatus status = matrix.begin();
     if (status != PROTOMATTER_OK)
@@ -63,42 +75,30 @@ public:
 
   void update(double t)
   {
-    float dt = t - last_display_update_t;
+    float dt = t - last_update_t;
+    last_update_t = t;
 
     m_imu_manager.update(t);
 
-    if (dt < 1. / 30.)
-    {
-      return;
-    }
-
-    last_display_update_t = t;
-
     // Blink when it's time
     float t_blink = t - time_of_next_blink;
-    float blink_duration = 0.1;
-    float eye_height = 0.3;
-    float eye_width = 0.1;
-    float eye_spacing = 0.15;
+    float eye_height = NOMINAL_EYE_HEIGHT;
     if (t_blink <= 0.0)
     {
     }
-    else if (t_blink <= blink_duration)
+    else if (t_blink <= BLINK_DURATION)
     {
-      eye_height *= (blink_duration - t_blink) / blink_duration;
+      eye_height *= (BLINK_DURATION - t_blink) / BLINK_DURATION;
     }
-    else if (t_blink <= 2. * blink_duration)
+    else if (t_blink <= 2. * BLINK_DURATION)
     {
-      eye_height *= (t_blink - blink_duration) / blink_duration;
+      eye_height *= (t_blink - BLINK_DURATION) / BLINK_DURATION;
     }
     else
     {
       // Choose when to next blink
       time_of_next_blink = t + rand_range(2.0, 6.0);
     }
-
-    // Move eye towards target.
-    eye_motion_smoother.update(t);
 
     // // Move target occasionally.
     // if (t >= time_of_next_target_change)
@@ -111,35 +111,95 @@ public:
     //   time_of_next_blink = t + rand_range(0, 0.2);
     // }
 
-    draw_background();
-    auto eye_color = matrix.color565(0x00, 0xFF, 0x00);
-
     BLA::Matrix<2, 1> eye_offset;
-    eye_offset(0) = 0;
-    eye_offset(1) = 0;
+    eye_offset.Fill(0.);
 
     if (m_imu_manager.is_valid())
     {
       const auto gyro_measurement = m_imu_manager.get_smoothed_gyro_measurement();
-      gyro_eye_offset(0) += -gyro_measurement(1) / 100.;
-      gyro_eye_offset(1) += gyro_measurement(0) / 100.;
 
-      for (int i = 0; i < 2; i++){
-        gyro_eye_offset(i) *= 0.9;
+      // ang velocity in rad/sec
+      float angular_velocity = sqrt(gyro_measurement(0) * gyro_measurement(0) + gyro_measurement(1) * gyro_measurement(1));
+      bool head_currently_moving = angular_velocity >= HEAD_MOVING_ANG_VEL_THRESHOLD;
+      if (head_currently_moving){
+        head_motion_last_moving_t = t;
+      } else {
+        head_motion_last_stationary_t = t;
       }
-      gyro_eye_offset(0) = max(min(gyro_eye_offset(0), MAX_GYRO_EYE_OFFSET_X), -MAX_GYRO_EYE_OFFSET_X);
-      gyro_eye_offset(1) = max(min(gyro_eye_offset(1), MAX_GYRO_EYE_OFFSET_Y), -MAX_GYRO_EYE_OFFSET_Y);
+      if ((t - head_motion_last_stationary_t) > 0.1 && !head_motion_event_active)
+      {
+        head_motion_event_active = true;
+        head_motion_start_t = t;
+        head_motion_second_phase_start_t = t + 100.;
+        gyro_eye_offset.Fill(0.);
+      } else if ((t - head_motion_last_moving_t) > 1.0 && head_motion_event_active){
+        head_motion_event_active = false;
+        gyro_eye_offset.Fill(0.);
+      }
 
-      eye_offset += gyro_eye_offset;
+      if (head_motion_event_active)
+      {
+        eye_motion_smoother.update_damping(FAST_EYE_FREQ, FAST_EYE_DAMPING_RATIO);
+        if (t < head_motion_second_phase_start_t)
+        {
+          // Compensate for current motion.
+          gyro_eye_offset(0) += -gyro_measurement(1) * dt / 10.;
+          gyro_eye_offset(1) += gyro_measurement(0) * dt / 5.;
+
+          if (abs(gyro_eye_offset(0)) > 2. * MAX_GYRO_EYE_OFFSET_X || abs(gyro_eye_offset(1) > MAX_GYRO_EYE_OFFSET_Y)){
+            head_motion_second_phase_start_t = min(head_motion_second_phase_start_t, t + BLINK_DURATION/2.);
+            time_of_next_blink = t;
+          } else {
+            head_motion_second_phase_start_t = t + 100.;
+          }
+          // for (int i = 0; i < 2; i++) 
+          // {
+          //   gyro_eye_offset(i) *= 0.9;
+          // }
+        }
+        else
+        {
+          // We've reached the edge, so just try to look in the direction of current motion instead.
+          gyro_eye_offset(0) = gyro_measurement(1) * dt;
+          gyro_eye_offset(1) = -gyro_measurement(0) * dt * 2.;
+        }
+      }
+      else
+      {
+        eye_motion_smoother.update_damping(NOMINAL_EYE_FREQ, NOMINAL_EYE_DAMPING_RATIO);
+        gyro_eye_offset.Fill(0.);
+      }
+
+      float total_offset = sqrt(gyro_eye_offset(0) * gyro_eye_offset(0) + gyro_eye_offset(1) + gyro_eye_offset(1));
+      if (total_offset < 0.01){
+        gyro_eye_offset.Fill(0.);
+      } else {
+        gyro_eye_offset(0) = max(min(gyro_eye_offset(0), MAX_GYRO_EYE_OFFSET_X), -MAX_GYRO_EYE_OFFSET_X);
+        gyro_eye_offset(1) = max(min(gyro_eye_offset(1), MAX_GYRO_EYE_OFFSET_Y), -MAX_GYRO_EYE_OFFSET_Y);
+      }
+
+      eye_offset = gyro_eye_offset;
     }
-    draw_eyes(eye_motion_smoother.get_state() + eye_offset, eye_width, eye_height, eye_spacing, eye_color);
 
+    // Move eye towards target.
+    eye_motion_smoother.set_target(nominal_eye_target + eye_offset);
+    eye_motion_smoother.update(t);
+
+    if (t - last_draw_t < 1. / 30.)
+    {
+      return;
+    }
+    // Actual time-gated 30hz drawing
+    last_draw_t = t;
+    draw_background();
+    auto eye_color = matrix.color565(0x00, 0xFF, 0x00);
+    draw_eyes(eye_motion_smoother.get_state(), NOMINAL_EYE_WIDTH, eye_height, NOMINAL_EYE_SPACING, eye_color);
     matrix.show();
   }
 
   void set_target(const BLA::Matrix<2, 1> &eye_pos)
   {
-    eye_motion_smoother.set_target(eye_pos);
+    nominal_eye_target = eye_pos;
   }
 
   const BLA::Matrix<2, 1> &get_target()
@@ -246,14 +306,14 @@ private:
         eye_height,
         eye_color);
   }
-  const float eye_freq = 10.0;
-  const float eye_damping_ratio = 0.9;
+  BLA::Matrix<2, 1> nominal_eye_target;
   PIDMotionSmoother<2> eye_motion_smoother = PIDMotionSmoother<2>(
       BLA::Matrix<2, 1>(0.5, 1.0),
       BLA::Matrix<2, 1>(0.5, 0.35),
-      eye_freq,
-      eye_damping_ratio);
-  double last_display_update_t = -0.01;
+      NOMINAL_EYE_FREQ,
+      NOMINAL_EYE_DAMPING_RATIO);
+  double last_draw_t = -0.01;
+  double last_update_t = -0.01;
   double time_of_next_target_change = 0.0;
   double time_of_next_blink = 0.0;
 
@@ -261,7 +321,12 @@ private:
   EyeMode current_eye_mode = EyeMode::HAPPY;
 
   // State machine for trying to keep eyes stationary.
-  // If we're not moving 
+  // If we're not moving
   IMUManager m_imu_manager;
+  double head_motion_start_t = 0.0;
+  bool head_motion_event_active = false;
+  double head_motion_second_phase_start_t = 0.;
+  double head_motion_last_moving_t = 0.0;
+  double head_motion_last_stationary_t = 0.0;
   BLA::Matrix<2, 1> gyro_eye_offset;
 };
